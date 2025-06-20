@@ -5,8 +5,6 @@ library(ggplot2)
 library(bnlearn)
 library(igraph)
 library(Rgraphviz)
-# Dati GSS con focus su l'opinioni relative alle leggi sulle armi (GUNLAW),
-# pena di morte (CAPPUN) e aborto in caso di stupro (ABRAPE).
 
 # Caricamento del dataset
 load("GSS.RData")
@@ -40,17 +38,17 @@ GSS_cleaned$SEX <- factor(GSS_cleaned$SEX,
                           levels = c(1, 2),
                           labels = c("Maschio", "Femmina"))
 
-# ABRAPE: pena per stupro
+# ABRAPE
 GSS_cleaned$ABRAPE <- factor(GSS_cleaned$ABRAPE,
                              levels = c(1, 2),
                              labels = c("Favorevole", "Contrario"))
 
-# CONFINAN: fiducia nel governo
+# CONFINAN
 GSS_cleaned$CONFINAN <- factor(GSS_cleaned$CONFINAN,
                                levels = c(1, 2, 3),
                                labels = c("Fiducioso", "Neutrale", "Scettico"))
 
-# SATJOB: soddisfazione per il lavoro
+# SATJOB
 GSS_cleaned$SATJOB <- factor(GSS_cleaned$SATJOB,
                              levels = c(1, 2, 3),
                              labels = c("Soddisfatto",
@@ -63,10 +61,10 @@ str(GSS_cleaned)
 
 #Visualizzaione grafico a barre
 
-ggplot(GSS_cleaned, aes(x = CAPPUN)) +
+ggplot(GSS_cleaned, aes(x = GUNLAW)) +
   geom_bar(fill = "purple3") +
   geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
-  labs(title = "Distribuzione di CUPPUN",
+  labs(title = "Distribuzione di GUNLAW",
        x = "Opinione", y = "Frequenza") +
   theme_minimal()
 
@@ -163,48 +161,56 @@ plot(bothBIC_model)
 title(main = "UG both BIC")
 
 
-
-#Grafi diretti - Reti bayesiane
+#Grafi diretti + Reti bayesiane
 
 model_bnstd <- hc(GSS_cleaned)
 dag_bnstd <-as.igraph(model_bnstd)
-plot(
-  dag_bnstd,
-  vertex.size = 20,
-  vertex.label.cex = 0.7,
-  edge.arrow.size = 0.6,
-  main = "Rete Bayesiana"
-  
-)
+graphviz.plot(model_bnstd)
+
+#Modelli con penalizzazione esplicita
+model_bnstd_aic <- hc(GSS_cleaned, score="aic")
+model_bnstd_bic <- hc(GSS_cleaned, score="bic")
+graphviz.plot(model_bnstd_aic)
+graphviz.plot(model_bnstd_bic)
+graphviz.plot(moral(model_bnstd_aic))
+graphviz.plot(moral(model_bnstd_bic))
+
+equivalenza <- isTRUE(all.equal(moral(model_bnstd_aic), moral(model_bnstd_bic)))
+cat("I due DAG moralizzati sono equivalenti markovianamente?", equivalenza)
 
 
+
+#Test di tutte le D-separation sia per le coppie che per le condizionate
+vars <- names(GSS_cleaned)
+
+for (i in 1:length(vars)) {
+  for (j in 1:length(vars)) {
+    if (i < j) {
+      cat(vars[i], "-", vars[j], ": ", dsep(model_bnstd_bic, vars[i], vars[j]), "\n")
+    }
+  }
+}
+
+for (i in 1:length(vars)) {
+  for (j in 1:length(vars)) {
+    for (k in 1:length(vars)) {
+      if (i < j && k != i && k != j) {
+        result <- dsep(model_bnstd_bic, x = vars[i], y = vars[j], z = vars[k])
+        cat(vars[i], "⫫", vars[j], "|", vars[k], ":", result, "\n")
+      }
+    }
+  }
+}
+
+#Rete Bayesiana con variabili target esplicite
 backgnd_vars <- c("SEX", "SATJOB", "CONFINAN")
 target_vars <- c("CAPPUN", "GUNLAW", "ABRAPE")
 blacklist <- expand.grid(from = target_vars, to = backgnd_vars)
-target_model_bn <- hc(GSS_cleaned, blacklist = blacklist)
-dag_target_bn <- as.igraph(target_model_bn)
-plot(
-  dag_target_bn,
-  vertex.size = 20,
-  vertex.label.cex = 0.7,
-  edge.arrow.size = 0.5,
-  main = "Rete Bayesiana con variabile target"
-)
+target_model_bn <- hc(GSS_cleaned, score="bic" ,blacklist = blacklist)
+graphviz.plot(target_model_bn)
 
-#Focus su CAPPUN
-GSS_sub_CAPPUN <- GSS_cleaned[,c("CAPPUN","SEX", "SATJOB", "CONFINAN")]
-blacklist_CAPPUN <- expand.grid(from = "CAPPUN", to = backgnd_vars)
-blacklist_SEX <- expand.grid(from = setdiff(c("CAPPUN", backgnd_vars), "SEX"), to = "SEX")
-blacklist_total <- rbind(blacklist_CAPPUN, blacklist_SEX)
-CAPPUN_model_bn <- hc(GSS_sub_CAPPUN, score = "aic", blacklist = blacklist_total)
-dag_CAPPUN_bn<- as.igraph(CAPPUN_model_bn)
-plot(
-  dag_CAPPUN_bn,
-  vertex.size = 20,
-  vertex.label.cex = 0.7,
-  edge.arrow.size = 0.5,
-  main = "Rete Bayesiana con target CAPPUN"
-)
+
+
 
 
 
@@ -226,7 +232,6 @@ graphviz.chart(bn_fit,
                )
 
 #Impostazione delle evidenze - SEX
-
 GSS_male <- subset(GSS_cleaned, SEX == "Maschio")
 bn_fit_male <- bn.fit(target_model_bn, data = GSS_male)
 GSS_female <- subset(GSS_cleaned, SEX == "Femmina")
@@ -240,7 +245,7 @@ graphviz.chart(bn_fit_female,
                bar.col = "mediumorchid3"
 )
 
-
+#Impostazione delle evidenze - CAPPUN
 GSS_cappun_F <- subset(GSS_cleaned, CAPPUN == "Favorevole")
 bn_fit_cappun_F <- bn.fit(target_model_bn, data = GSS_cappun_F)
 GSS_cappun_C <- subset(GSS_cleaned, CAPPUN == "Contrario")
@@ -254,6 +259,7 @@ graphviz.chart(bn_fit_cappun_C,
                bar.col = "royalblue3"
 )
 
+#Impostazione delle evidenze - ABRAPE
 GSS_abrape_F <- subset(GSS_cleaned, ABRAPE == "Favorevole")
 bn_fit_abrape_F <- bn.fit(target_model_bn, data = GSS_abrape_F)
 GSS_abrape_C <- subset(GSS_cleaned, ABRAPE == "Contrario")
@@ -268,6 +274,7 @@ graphviz.chart(bn_fit_abrape_C,
 )
 
 
+#Impostazione delle evidenze - CAPPUN + SEX
 GSS_cappun_F_SEX_M <- subset(GSS_cleaned, CAPPUN == "Favorevole" & SEX == "Maschio")
 bn_fit_cappun_F_SEX_M <- bn.fit(target_model_bn, data = GSS_cappun_F_SEX_M)
 graphviz.chart(bn_fit_cappun_F_SEX_M,
@@ -294,7 +301,7 @@ graphviz.chart(bn_fit_cappun_C_SEX_F,
 )
 
 
-#Regrazzione logistica
+#Regresione logistica
 null_model <- glm(GUNLAW ~ 1, data = GSS_cleaned, family = binomial)
 full_model <- glm(GUNLAW ~.^2, data = GSS_cleaned, family = binomial)
 scope <- list(lower=formula(null_model), upper = formula(full_model))
@@ -318,31 +325,3 @@ summary(both_model_AIC)
 
 both_model_BIC <- step(null_model, scope = scope, direction = "both", k = log(nrow(GSS_cleaned)))
 summary(both_model_BIC)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
